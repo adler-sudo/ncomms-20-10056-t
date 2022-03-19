@@ -58,8 +58,8 @@ def remove_empty_markers(df):
     Removes markers that are missing in at least one sample.
     """
     # from original jupyter notebook - may need to refine but seems like we should be able to just dropna rather than defining all columns
-    # amf_df = df.copy()
-    # amf_df = amf_df.loc[amf_df[healthy_samples+post_diagnosis_samples+pre_diagnosis_samples].dropna(how='any').index]
+    # amf_df_orig = df.copy()
+    # amf_df_orig = amf_df_orig.loc[amf_df_orig[healthy_samples+post_diagnosis_samples+pre_diagnosis_samples].dropna(how='any').index]
 
     df = df.dropna(how='any')
     return df
@@ -145,9 +145,49 @@ def main():
     # perform bh correction and identify minimum pval across ALL tissues?
     tissue_t_tests_min_by_marker = bh_correction(ttest_df=ttest_df)
     
-    # TODO: this is where you left off
-    negative_leavein, negative_leavout = generate_training_split(list(tsh_metadata_df.index))
-    print(negative_leavein)
+    # generate leavein, leaveout sets
+    negative_leavein, negative_leavout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.status=='healthy',:].index))
+    positive_post_leavein, positive_post_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.status=='post-diagnosis',:].index))
+    positive_pre_leavein, positive_pre_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.status=='pre-diagnosis',:].index))
+    
+    # build ensemble model
+    negative_test_list = []
+    positive_post_test_list = []
+    positive_pre_test_list = []
+    z_prob_list = []
 
+    # Split the leave-in set into training and test set
+    for random_state in range(1000):
+        random.seed(random_state)
+    
+        # Set up LR classifier that will automatically fit the best C value using the training set
+        clf = LogisticRegressionCV(penalty='l1', solver='liblinear', random_state=random_state,
+                                Cs=[1.0, 5.0, 10.0, 50.0, 100.0], cv=3)
+        
+        random.shuffle(negative_leavein)
+        random.shuffle(positive_post_leavein)
+        random.shuffle(positive_pre_leavein)
+        negative_training, negative_test = negative_leavein[:1*int(len(negative_leavein)/2)], negative_leavein[int(1*len(negative_leavein)/2):]
+        positive_post_training, positive_post_test = positive_post_leavein[:1*int(len(positive_post_leavein)/2)], positive_post_leavein[int(1*len(positive_post_leavein)/2):]
+        positive_pre_training, positive_pre_test = positive_pre_leavein[:1*int(len(positive_pre_leavein)/2)], positive_pre_leavein[int(1*len(positive_pre_leavein)/2):]
+        positive_training = positive_post_training+positive_pre_training
+        positive_test = positive_post_test+positive_pre_test
+        
+        # Build the model and set parameters using the training set
+        x = amf_df_orig.loc[tissue_t_tests_min_by_marker.index, negative_training+positive_training].transpose()
+        y = ['Healthy']*len(negative_training) + ['Cancer']*len(positive_training)
+        clf.fit(x,y)
+
+        # Compute the accuracy of this classifier on the leave-in and leave-out sets
+        z = clf.predict(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())
+        z_prob = clf.predict_proba(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())[:, 0]
+        
+        # Store the results
+        negative_test_list.append(negative_test)
+        positive_post_test_list.append(positive_post_test)
+        positive_pre_test_list.append(positive_pre_test)
+        z_prob_list.append(z_prob)
+        
+    print(z_prob_list)
 if __name__ == '__main__':
     main()
