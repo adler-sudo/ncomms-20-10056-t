@@ -65,6 +65,7 @@ def remove_empty_markers(df):
     return df
 
 # TODO: why can't we just use the sklearn train_test_split here?
+# TODO: include different split sizes here
 def generate_training_split(samples):
     """
     Splits the designated samples into leavein and leaveout.
@@ -146,9 +147,9 @@ def main():
     tissue_t_tests_min_by_marker = bh_correction(ttest_df=ttest_df)
     
     # generate leavein, leaveout sets
-    negative_leavein, negative_leavout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.status=='healthy',:].index))
-    positive_post_leavein, positive_post_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.status=='post-diagnosis',:].index))
-    positive_pre_leavein, positive_pre_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.status=='pre-diagnosis',:].index))
+    negative_leavein, negative_leavout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='healthy',:].index))
+    positive_post_leavein, positive_post_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='post-diagnosis',:].index))
+    positive_pre_leavein, positive_pre_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='pre-diagnosis',:].index))
     
     # build ensemble model
     negative_test_list = []
@@ -164,18 +165,18 @@ def main():
         clf = LogisticRegressionCV(penalty='l1', solver='liblinear', random_state=random_state,
                                 Cs=[1.0, 5.0, 10.0, 50.0, 100.0], cv=3)
         
-        random.shuffle(negative_leavein)
-        random.shuffle(positive_post_leavein)
-        random.shuffle(positive_pre_leavein)
-        negative_training, negative_test = negative_leavein[:1*int(len(negative_leavein)/2)], negative_leavein[int(1*len(negative_leavein)/2):]
-        positive_post_training, positive_post_test = positive_post_leavein[:1*int(len(positive_post_leavein)/2)], positive_post_leavein[int(1*len(positive_post_leavein)/2):]
-        positive_pre_training, positive_pre_test = positive_pre_leavein[:1*int(len(positive_pre_leavein)/2)], positive_pre_leavein[int(1*len(positive_pre_leavein)/2):]
+        negative_training, negative_test = generate_training_split(negative_leavein)
+        positive_post_training, positive_post_test = generate_training_split(positive_post_leavein)
+        positive_pre_training, positive_pre_test = generate_training_split(positive_pre_leavein)
+        
         positive_training = positive_post_training+positive_pre_training
         positive_test = positive_post_test+positive_pre_test
+
+        all_training = negative_training + positive_training
         
         # Build the model and set parameters using the training set
-        x = amf_df_orig.loc[tissue_t_tests_min_by_marker.index, negative_training+positive_training].transpose()
-        y = ['Healthy']*len(negative_training) + ['Cancer']*len(positive_training)
+        x = amf_df_orig.loc[tissue_t_tests_min_by_marker.index, all_training].transpose()
+        y = tsh_metadata_df.loc[all_training,'status']
         clf.fit(x,y)
 
         # Compute the accuracy of this classifier on the leave-in and leave-out sets
@@ -187,6 +188,8 @@ def main():
         positive_post_test_list.append(positive_post_test)
         positive_pre_test_list.append(positive_pre_test)
         z_prob_list.append(z_prob)
+        print(z_prob_list)
+        break
         
     print(z_prob_list)
 if __name__ == '__main__':
