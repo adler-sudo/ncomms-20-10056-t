@@ -28,6 +28,7 @@ def parse_args():
     parser.add_argument('-p','--output_prediction_file',help='Desired path to the output production table.')
     parser.add_argument('-m','--metadata_file',help='Pre and post diagnosis metadata.')
     parser.add_argument('-b','--biochain_metadata_file',help='Biochain metadata file.')
+    parser.add_argument('-t','--num_trees',help='Number of trees in classifier.',default=5)
     args = parser.parse_args()
     return args
 
@@ -109,6 +110,39 @@ def set_plot_characteristics():
     sns.set_context('notebook', font_scale=1.2)
     sns.set_style('white')
 
+def build_datasplits(num_trees:int) -> tuple[list,list]:
+    """
+    Define the indices of each of the splits.
+
+    Parameters:
+    -----------
+    num_trees : int
+        Used to set the random_state using a loop
+
+    Returns:
+    --------
+    datasplits : tuple
+        Tuple returning each of the datasplits for training and validation
+    """
+    pass
+
+def build_ensemble_tree(num_trees:int) -> list:
+    """
+    Build and store each of the models for our forest.
+
+    Parameters:
+    -----------
+    num_trees : int
+        Number of trees in our forest
+
+    Returns:
+    --------
+    lr_forest : list
+        Each of the trees in our forest
+    """
+    for random_state in range(num_trees):
+        pass
+
 # TODO: we should be able to simplify this
 def compute_ensemble_performance(z_prob_list,negative_test_list,positive_pre_test_list,positive_post_test_list):
     ensemble_score = pd.concat([
@@ -127,8 +161,9 @@ def output_predictions():
     pass
 
 def main():
-    # set random seed
     args = parse_args()
+
+    NUM_TREES = args.num_trees
     
     amf_df_orig = process_data(args.input_file)
     tsh_metadata_df = process_metadata(args.metadata_file)
@@ -165,7 +200,7 @@ def main():
     z_prob_list = []
 
     # Split the leave-in set into training and test set
-    for random_state in range(5):
+    for random_state in range(NUM_TREES):
         random.seed(random_state)
 
         # TODO: would be better to store each individual predictor in a list then use to predict on all desired samples        
@@ -173,6 +208,7 @@ def main():
         clf = LogisticRegressionCV(penalty='l1', solver='liblinear', random_state=random_state,
                                 Cs=[1.0, 5.0, 10.0, 50.0, 100.0], cv=3)
         
+        # TODO: we're already storing these values in lists so why not just put this into a function and move that stuff out of this loop
         negative_training, negative_test = generate_training_split(
             samples=negative_leavein,
             random_state=random_state)
