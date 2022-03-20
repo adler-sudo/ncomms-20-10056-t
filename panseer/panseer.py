@@ -66,10 +66,11 @@ def remove_empty_markers(df):
 
 # TODO: why can't we just use the sklearn train_test_split here?
 # TODO: include different split sizes here
-def generate_training_split(samples):
+def generate_training_split(samples:list,random_state:int=0):
     """
     Splits the designated samples into leavein and leaveout.
     """
+    random.seed(random_state)
     random.shuffle(samples)
     leavein = list(samples[:int(len(samples)/2)])
     leaveout = list(samples[int(len(samples)/2):])
@@ -108,6 +109,14 @@ def set_plot_characteristics():
     sns.set_context('notebook', font_scale=1.2)
     sns.set_style('white')
 
+# TODO: we should be able to simplify this
+def compute_ensemble_performance(z_prob_list,negative_test_list,positive_pre_test_list,positive_post_test_list):
+    ensemble_score = pd.concat([
+        z_prob_list[index].loc[negative_test_list[index]+positive_pre_test_list[index]+positive_post_test_list[index]] for index in range(1000)],
+        axis=1, 
+        sort=True).mean(axis=1)
+    return ensemble_score
+
 def generate_roc_curve():
     pass
 
@@ -119,8 +128,6 @@ def output_predictions():
 
 def main():
     # set random seed
-    random.seed(128)
-
     args = parse_args()
     
     amf_df_orig = process_data(args.input_file)
@@ -158,16 +165,23 @@ def main():
     z_prob_list = []
 
     # Split the leave-in set into training and test set
-    for random_state in range(1000):
+    for random_state in range(5):
         random.seed(random_state)
-    
+
+        # TODO: would be better to store each individual predictor in a list then use to predict on all desired samples        
         # Set up LR classifier that will automatically fit the best C value using the training set
         clf = LogisticRegressionCV(penalty='l1', solver='liblinear', random_state=random_state,
                                 Cs=[1.0, 5.0, 10.0, 50.0, 100.0], cv=3)
         
-        negative_training, negative_test = generate_training_split(negative_leavein)
-        positive_post_training, positive_post_test = generate_training_split(positive_post_leavein)
-        positive_pre_training, positive_pre_test = generate_training_split(positive_pre_leavein)
+        negative_training, negative_test = generate_training_split(
+            samples=negative_leavein,
+            random_state=random_state)
+        positive_post_training, positive_post_test = generate_training_split(
+            samples=positive_post_leavein,
+            random_state=random_state)
+        positive_pre_training, positive_pre_test = generate_training_split(
+            samples=positive_pre_leavein,
+            random_state=random_state)
         
         positive_training = positive_post_training+positive_pre_training
         positive_test = positive_post_test+positive_pre_test
@@ -188,8 +202,20 @@ def main():
         positive_post_test_list.append(positive_post_test)
         positive_pre_test_list.append(positive_pre_test)
         z_prob_list.append(z_prob)
-        print(z_prob_list)
-        break
+
+    # TODO: the generation of these doesn't exactly make sense to me
+    # TODO: basically we are just trying to grab the scores and plot
+    # ensemble_score_leavein = compute_ensemble_performance(
+    #     z_prob_list=z_prob_list,
+    #     negative_test_list=negative_test_list,
+    #     positive_pre_test_list=positive_pre_test_list,
+    #     positive_post_test_list=positive_post_test_list
+    # )
+    # TODO: THIS IS WHERE YOU LEFT OFF
+    # ensemble_score_leaveout = compute_ensemble_performance(
+    #     z_prob_list=z_prob_list,
+    #     negativ
+    # )
         
     print(z_prob_list)
 if __name__ == '__main__':
