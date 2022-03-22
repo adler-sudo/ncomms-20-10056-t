@@ -8,6 +8,7 @@ import sys
 import os
 import glob
 import random
+import itertools
 
 import pandas as pd
 import numpy as np
@@ -110,23 +111,43 @@ def set_plot_characteristics():
     sns.set_context('notebook', font_scale=1.2)
     sns.set_style('white')
 
-def build_datasplits(num_trees:int) -> tuple[list,list]:
+def construct_training_datasets(num_trees:int,samples:list) -> tuple[list,list]:
     """
-    Define the indices of each of the splits.
+    Define the indices of the training and validation sets. Returns two lists of lists, training and validation, of
+    length num_trees. 
 
     Parameters:
     -----------
     num_trees : int
         Used to set the random_state using a loop
+    samples : list
+        Indices to be split into training and validation
 
     Returns:
     --------
-    datasplits : tuple
-        Tuple returning each of the datasplits for training and validation
+    training_list : list
+        List of lists of training indices
+    validation_list : list
+        List of lists of validation indices
     """
-    pass
+    training_list = []
+    validation_list = []
+    for random_state in range(num_trees):
+        training_epoch, validation_epoch = generate_training_split(
+            samples=samples,
+            random_state=random_state)
+        training_list.append(training_epoch)
+        validation_list.append(validation_epoch)
+    return training_list, validation_list
 
-def build_ensemble_tree(num_trees:int) -> list:
+def combine_training_dataset_elementwise(*args):
+    """
+    Combines the elements of each list by index.
+    """
+    return list(zip(*args))
+
+
+def build_ensemble_tree(num_trees:int,training_samples:list,metadata_df:pd.DataFrame,df:pd.DataFrame) -> list:
     """
     Build and store each of the models for our forest.
 
@@ -134,14 +155,37 @@ def build_ensemble_tree(num_trees:int) -> list:
     -----------
     num_trees : int
         Number of trees in our forest
+    training_samples : list
+        List of lists with indices of training samples
+    metadata_df : pd.DataFrame
+        Dataframe containing the sample labels
+    df : pd.DataFrame
+        Dataframe containing the counts data to be used in training. Markers in rows, samples in columns.
 
     Returns:
     --------
     lr_forest : list
-        Each of the trees in our forest
+        Each of the trees in our forest - corresponds to individual logistic regression classifier per index
     """
-    for random_state in range(num_trees):
-        pass
+    lr_forest = []
+    for i in range(num_trees):
+        epoch_samples = list(itertools.chain.from_iterable(training_samples[i]))
+        x = df.loc[:,epoch_samples].transpose().values
+        y = metadata_df.loc[epoch_samples,'status']
+
+        # Set up LR classifier that will automatically fit the best C value using the training set
+        clf = LogisticRegressionCV(
+            penalty='l1', 
+            solver='liblinear', 
+            random_state=i,
+            Cs=[1.0, 5.0, 10.0, 50.0, 100.0], 
+            cv=3)
+
+        clf.fit(x,y)
+        
+        lr_forest.append(clf)
+        
+    return lr_forest
 
 # TODO: we should be able to simplify this
 def compute_ensemble_performance(z_prob_list,negative_test_list,positive_pre_test_list,positive_post_test_list):
@@ -185,58 +229,57 @@ def main():
             cancer_samples=cancer_samples,
             column_name=cancer_tissue
         )
-    # perform bh correction and identify minimum pval across ALL tissues?
+    # perform bh correction and reduce df to only markers meeting criteria
     tissue_t_tests_min_by_marker = bh_correction(ttest_df=ttest_df)
+    amf_df_reduced_marker = amf_df_orig.loc[tissue_t_tests_min_by_marker.index,:]
     
     # generate leavein, leaveout sets
     negative_leavein, negative_leavout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='healthy',:].index))
     positive_post_leavein, positive_post_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='post-diagnosis',:].index))
     positive_pre_leavein, positive_pre_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='pre-diagnosis',:].index))
     
-    # build ensemble model
-    negative_test_list = []
-    positive_post_test_list = []
-    positive_pre_test_list = []
-    z_prob_list = []
+    # split leavein to training and validation lists for each of negative, post-diagnosis, and pre-diagnosis
+    negative_training, negative_validation = construct_training_datasets(
+        num_trees=NUM_TREES,
+        samples=negative_leavein
+    )
+    positive_post_training, positive_post_validation = construct_training_datasets(
+        num_trees=NUM_TREES,
+        samples=positive_post_leavein
+    )
+    positive_pre_training, positive_pre_validation = construct_training_datasets(
+        num_trees=NUM_TREES,
+        samples=positive_pre_leavein
+    )
+    
+    # training and validation sets combined
+    all_training = combine_training_dataset_elementwise(
+        negative_training,
+        positive_post_training,
+        positive_pre_training
+    )
+    all_validation = combine_training_dataset_elementwise(
+        negative_validation,
+        positive_post_validation,
+        positive_pre_validation
+    )
+
+    # build the ensemble forest
+    lr_forest = build_ensemble_tree(
+        num_trees=NUM_TREES,
+        training_samples=all_training,
+        metadata_df=tsh_metadata_df,
+        df=amf_df_reduced_marker
+    )
 
     # Split the leave-in set into training and test set
-    for random_state in range(NUM_TREES):
-        random.seed(random_state)
-
-        # TODO: would be better to store each individual predictor in a list then use to predict on all desired samples        
-        # Set up LR classifier that will automatically fit the best C value using the training set
-        clf = LogisticRegressionCV(penalty='l1', solver='liblinear', random_state=random_state,
-                                Cs=[1.0, 5.0, 10.0, 50.0, 100.0], cv=3)
-        
-        # TODO: we're already storing these values in lists so why not just put this into a function and move that stuff out of this loop
-        negative_training, negative_test = generate_training_split(
-            samples=negative_leavein,
-            random_state=random_state)
-        positive_post_training, positive_post_test = generate_training_split(
-            samples=positive_post_leavein,
-            random_state=random_state)
-        positive_pre_training, positive_pre_test = generate_training_split(
-            samples=positive_pre_leavein,
-            random_state=random_state)
-        
-        positive_training = positive_post_training+positive_pre_training
-        positive_test = positive_post_test+positive_pre_test
-
-        all_training = negative_training + positive_training
-        
-        # Build the model and set parameters using the training set
-        x = amf_df_orig.loc[tissue_t_tests_min_by_marker.index, all_training].transpose()
-        y = tsh_metadata_df.loc[all_training,'status']
-        clf.fit(x,y)
+    for i in range(NUM_TREES):
 
         # Compute the accuracy of this classifier on the leave-in and leave-out sets
         z = clf.predict(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())
         z_prob = clf.predict_proba(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())[:, 0]
         
         # Store the results
-        negative_test_list.append(negative_test)
-        positive_post_test_list.append(positive_post_test)
-        positive_pre_test_list.append(positive_pre_test)
         z_prob_list.append(z_prob)
 
     # TODO: the generation of these doesn't exactly make sense to me
@@ -247,12 +290,11 @@ def main():
     #     positive_pre_test_list=positive_pre_test_list,
     #     positive_post_test_list=positive_post_test_list
     # )
-    # TODO: THIS IS WHERE YOU LEFT OFF
     # ensemble_score_leaveout = compute_ensemble_performance(
     #     z_prob_list=z_prob_list,
     #     negativ
     # )
-        
-    print(z_prob_list)
+
+
 if __name__ == '__main__':
     main()
