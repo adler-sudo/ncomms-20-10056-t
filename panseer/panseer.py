@@ -10,12 +10,14 @@ import glob
 import random
 import itertools
 
+from statistics import mode
 import pandas as pd
 import numpy as np
 import scipy
 from scipy import stats
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from statsmodels.stats.multitest import multipletests
 
 import seaborn as sns
@@ -29,7 +31,8 @@ def parse_args():
     parser.add_argument('-p','--output_prediction_file',help='Desired path to the output production table.')
     parser.add_argument('-m','--metadata_file',help='Pre and post diagnosis metadata.')
     parser.add_argument('-b','--biochain_metadata_file',help='Biochain metadata file.')
-    parser.add_argument('-t','--num_trees',help='Number of trees in classifier.',default=5)
+    parser.add_argument('-t','--num_trees',help='Number of trees in classifier.',type=int,default=5)
+    parser.add_argument('-c','--conf_matrix_file',help='Desired path to the confusion matrix plot.',default='conf_matrix.png')
     args = parser.parse_args()
     return args
 
@@ -170,7 +173,7 @@ def build_ensemble_tree(num_trees:int,training_samples:list,metadata_df:pd.DataF
     lr_forest = []
     for i in range(num_trees):
         epoch_samples = list(itertools.chain.from_iterable(training_samples[i]))
-        x = df.loc[:,epoch_samples].transpose().values
+        x = df.loc[:,epoch_samples].transpose()
         y = metadata_df.loc[epoch_samples,'status']
 
         # Set up LR classifier that will automatically fit the best C value using the training set
@@ -186,6 +189,47 @@ def build_ensemble_tree(num_trees:int,training_samples:list,metadata_df:pd.DataF
         lr_forest.append(clf)
         
     return lr_forest
+
+def make_predictions(lr_forest:list,df:pd.DataFrame) -> list:
+    """
+    Make predictions using the logistic regression forest.
+
+    Parameters:
+    -----------
+    lr_forest : list
+        Contains each of the models.
+    df : pd.DataFrame
+        Dataframe containing the counts data to be used in training. Markers in rows, samples in columns.
+
+    Returns:
+    --------
+    predictions : list
+        Most common prediction across all models.
+    """
+    pred_matrix = []
+    for model in lr_forest:
+        preds = model.predict(df.transpose())
+        pred_matrix.append(list(preds))
+    # determine most common prediction
+    predictions = [mode(a) for a in zip(*pred_matrix)]
+    return predictions,model
+
+def construct_confusion_matrix(y_pred:list,metadata_df:pd.DataFrame,model,confusion_matrix_file:str):
+    """
+    Constructs confusion matrix of healthy vs cancer predictions
+
+    Parameters:
+    -----------
+    y_pred : list
+        Predictions made by the forest model
+    metadata_df : pd.DataFrame
+        Dataframe containing the sample labels
+    """
+    cm = confusion_matrix(metadata_df.status,y_pred,labels=model.classes_)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm,display_labels=model.classes_)
+    disp.plot()
+    plt.savefig('test.png')
+
 
 # TODO: we should be able to simplify this
 def compute_ensemble_performance(z_prob_list,negative_test_list,positive_pre_test_list,positive_post_test_list):
@@ -231,8 +275,8 @@ def main():
         )
     # perform bh correction and reduce df to only markers meeting criteria
     tissue_t_tests_min_by_marker = bh_correction(ttest_df=ttest_df)
-    amf_df_reduced_marker = amf_df_orig.loc[tissue_t_tests_min_by_marker.index,:]
-    
+    amf_df_reduced_marker = amf_df_orig.loc[tissue_t_tests_min_by_marker.index,tsh_metadata_df.index]
+
     # generate leavein, leaveout sets
     negative_leavein, negative_leavout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='healthy',:].index))
     positive_post_leavein, positive_post_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='post-diagnosis',:].index))
@@ -272,15 +316,29 @@ def main():
         df=amf_df_reduced_marker
     )
 
-    # Split the leave-in set into training and test set
-    for i in range(NUM_TREES):
+    # TODO: remove model piece here - just a placeholder to get the classes
+    predictions,model = make_predictions(
+        lr_forest=lr_forest,
+        df=amf_df_reduced_marker
+    )
 
-        # Compute the accuracy of this classifier on the leave-in and leave-out sets
-        z = clf.predict(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())
-        z_prob = clf.predict_proba(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())[:, 0]
+    construct_confusion_matrix(
+        y_pred=predictions,
+        metadata_df=tsh_metadata_df,
+        model=model,
+        confusion_matrix_file=args.conf_matrix_file
+    )
+
+
+    # # Split the leave-in set into training and test set
+    # for i in range(NUM_TREES):
+
+    #     # Compute the accuracy of this classifier on the leave-in and leave-out sets
+    #     z = clf.predict(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())
+    #     z_prob = clf.predict_proba(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())[:, 0]
         
-        # Store the results
-        z_prob_list.append(z_prob)
+    #     # Store the results
+    #     z_prob_list.append(z_prob)
 
     # TODO: the generation of these doesn't exactly make sense to me
     # TODO: basically we are just trying to grab the scores and plot
