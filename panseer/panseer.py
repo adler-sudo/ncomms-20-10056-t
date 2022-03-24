@@ -330,29 +330,5 @@ def main():
     )
 
 
-    # # Split the leave-in set into training and test set
-    # for i in range(NUM_TREES):
-
-    #     # Compute the accuracy of this classifier on the leave-in and leave-out sets
-    #     z = clf.predict(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())
-    #     z_prob = clf.predict_proba(amf_df_orig.loc[tissue_t_tests_min_by_marker.index, :].transpose())[:, 0]
-        
-    #     # Store the results
-    #     z_prob_list.append(z_prob)
-
-    # TODO: the generation of these doesn't exactly make sense to me
-    # TODO: basically we are just trying to grab the scores and plot
-    # ensemble_score_leavein = compute_ensemble_performance(
-    #     z_prob_list=z_prob_list,
-    #     negative_test_list=negative_test_list,
-    #     positive_pre_test_list=positive_pre_test_list,
-    #     positive_post_test_list=positive_post_test_list
-    # )
-    # ensemble_score_leaveout = compute_ensemble_performance(
-    #     z_prob_list=z_prob_list,
-    #     negativ
-    # )
-
-
 if __name__ == '__main__':
     main()
