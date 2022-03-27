@@ -207,12 +207,18 @@ def make_predictions(lr_forest:list,df:pd.DataFrame) -> list:
         Most common prediction across all models.
     """
     pred_matrix = []
-    for model in lr_forest:
+    z_prob_array = np.zeros([len(lr_forest),df.shape[1]])
+    for n,model in enumerate(lr_forest):
         preds = model.predict(df.transpose())
         pred_matrix.append(list(preds))
+        # grab the prediction probability of class 1 of 2 
+        z_prob = model.predict_proba(df.transpose())[:,0]
+        z_prob_array[n] = z_prob
     # determine most common prediction
     predictions = [mode(a) for a in zip(*pred_matrix)]
-    return predictions,model
+    z_prob_mean = z_prob_array.mean(axis=0)
+    # TODO: remove model here - just place holder now to access classes
+    return predictions,model,z_prob_mean
 
 def construct_confusion_matrix(y_pred:list,metadata_df:pd.DataFrame,model,confusion_matrix_file:str):
     """
@@ -239,9 +245,44 @@ def compute_ensemble_performance(z_prob_list,negative_test_list,positive_pre_tes
         sort=True).mean(axis=1)
     return ensemble_score
 
-def generate_roc_curve():
-    pass
+def construct_roc(metadata_df:pd.DataFrame,y_score:np.array,pre_samples:list,post_samples:list,output_file:str,pos_label:str='cancer') -> None:
+    """
+    Construct ROC curve for predictions.
+    """
+    metadata_df['y_score'] = y_score # TODO: reevaluate this piece - best solution could come up with for now
 
+    # TODO: can turn this all into a separate function
+    leavein_metadata_df = metadata_df.loc[post_samples,:]
+    y_true = leavein_metadata_df.status
+    y_score = leavein_metadata_df.y_score # TODO: need to come up with a different variable name here
+
+    cur_fpr, cur_tpr, cur_cutoff = roc_curve(y_true,y_score,pos_label=pos_label)
+    cur_auc = auc(cur_fpr,cur_tpr)
+    
+    plt.clf()
+    plt.plot(cur_fpr, cur_tpr, label=r'Post-Diagnosis ROC (AUC = %0.2f)' % cur_auc)
+
+    # TODO: can turn this all into a separate function
+    leavein_metadata_df = metadata_df.loc[pre_samples,:]
+    y_true = leavein_metadata_df.status
+    y_score = leavein_metadata_df.y_score
+
+    cur_fpr, cur_tpr, cur_cutoff = roc_curve(y_true,y_score,pos_label=pos_label)
+    cur_auc = auc(cur_fpr,cur_tpr)
+
+    plt.plot(cur_fpr, cur_tpr, label=r'Pre-Diagnosis ROC (AUC = %0.2f)' % cur_auc)
+    plt.grid()
+    # plt.xlim([-0.0, 1.0])
+    # plt.ylim([-0.0, 1.0])
+    # plt.xticks([0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    # plt.yticks([0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.legend(loc="lower right")
+
+    plt.savefig('roc-curve.png')
+
+    
 def generate_prediction_plot():
     pass
 
@@ -276,7 +317,7 @@ def main():
     # perform bh correction and reduce df to only markers meeting criteria
     tissue_t_tests_min_by_marker = bh_correction(ttest_df=ttest_df)
     amf_df_reduced_marker = amf_df_orig.loc[tissue_t_tests_min_by_marker.index,tsh_metadata_df.index]
-
+    
     # generate leavein, leaveout sets
     negative_leavein, negative_leavout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='healthy',:].index))
     positive_post_leavein, positive_post_leaveout = generate_training_split(list(tsh_metadata_df.loc[tsh_metadata_df.type=='post-diagnosis',:].index))
@@ -317,7 +358,7 @@ def main():
     )
 
     # TODO: remove model piece here - just a placeholder to get the classes
-    predictions,model = make_predictions(
+    predictions,model,z_prob_mean = make_predictions(
         lr_forest=lr_forest,
         df=amf_df_reduced_marker
     )
@@ -329,6 +370,14 @@ def main():
         confusion_matrix_file=args.conf_matrix_file
     )
 
+    construct_roc(
+        metadata_df=tsh_metadata_df.loc[amf_df_reduced_marker.columns,:],
+        y_score=z_prob_mean,
+        pre_samples=negative_leavein+positive_post_leavein,
+        post_samples=negative_leavein+positive_pre_leavein,
+        pos_label='cancer',
+        output_file=args.output_roc_curve_file
+    )
 
 if __name__ == '__main__':
     main()
