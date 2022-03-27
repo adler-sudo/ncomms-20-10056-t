@@ -283,8 +283,30 @@ def construct_roc(metadata_df:pd.DataFrame,y_score:np.array,pre_samples:list,pos
     plt.savefig('roc-curve.png')
 
     
-def generate_prediction_plot():
-    pass
+def construct_distribution_plot(
+    metadata_df:pd.DataFrame,
+    y_score:np.array,
+    negative_samples:list,
+    pre_samples:list,
+    post_samples:list,
+    output_file:str) -> None:
+    """
+    Generate prediction distribution plot
+    """
+    metadata_df['y_score'] = y_score
+    
+    plt.clf()
+    plt.figure()
+    # TODO: need to update due to deprecated function
+    sns.distplot(metadata_df.loc[negative_samples,'y_score'])
+    sns.distplot(metadata_df.loc[pre_samples,'y_score'])
+    sns.distplot(metadata_df.loc[post_samples,'y_score'])
+    plt.legend(['Healthy', 'Post-Diagnosis', 'Pre-Diagnosis'])
+    plt.xlim(0, 1)
+
+    plt.savefig('distribution-plot.png')
+
+    return None
 
 def output_predictions():
     pass
@@ -377,6 +399,15 @@ def main():
         post_samples=negative_leavein+positive_pre_leavein,
         pos_label='cancer',
         output_file=args.output_roc_curve_file
+    )
+
+    construct_distribution_plot(
+        metadata_df=tsh_metadata_df.loc[amf_df_reduced_marker.columns,:],
+        y_score=z_prob_mean,
+        negative_samples=negative_leavein,
+        pre_samples=positive_pre_leavein,
+        post_samples=positive_post_leavein,
+        output_file=args.output_prediction_file
     )
 
 if __name__ == '__main__':
